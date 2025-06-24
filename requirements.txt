@@ -1,7 +1,7 @@
 streamlit
 streamlit-webrtc
 opencv-python
-mediapipe
+mediapipe==0.10.21
 numpy
 matplotlib
 pandas
