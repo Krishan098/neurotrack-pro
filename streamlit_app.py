@@ -2,7 +2,7 @@ import cv2
 import mediapipe as mp
 import numpy as np
 import streamlit as st
-from streamlit_webrtc import webrtc_streamer, VideoTransformerBase
+from streamlit_webrtc import webrtc_streamer, VideoProcessorBase
 import time
 import matplotlib.pyplot as plt
 from io import BytesIO
@@ -10,7 +10,6 @@ import pandas as pd
 
 # Initialize MediaPipe Pose
 mp_pose = mp.solutions.pose
-pose = mp_pose.Pose()
 mp_drawing = mp.solutions.drawing_utils
 
 important_body_indices = [
@@ -22,24 +21,23 @@ important_body_indices = [
     mp_pose.PoseLandmark.RIGHT_HIP.value,
 ]
 
-
 def calculate_angle(a, b, c):
     a, b, c = np.array(a), np.array(b), np.array(c)
     radians = np.arctan2(c[1] - b[1], c[0] - b[0]) - np.arctan2(a[1] - b[1], a[0] - b[0])
     angle = np.abs(radians * 180.0 / np.pi)
     return 360 - angle if angle > 180 else angle
 
-
-class VideoTransformer(VideoTransformerBase):
-    def __init__(self):
+class VideoProcessor(VideoProcessorBase):
+    def _init_(self):
         self.left_angle = 0
         self.right_angle = 0
+        self.pose = mp_pose.Pose(static_image_mode=False, min_detection_confidence=0.5, min_tracking_confidence=0.5)
 
-    def transform(self, frame):
+    def recv(self, frame):
         img = frame.to_ndarray(format="bgr24")
         img = cv2.flip(img, 1)
         rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-        results = pose.process(rgb)
+        results = self.pose.process(rgb)
 
         if results.pose_landmarks:
             mask = img.copy()
@@ -80,7 +78,6 @@ class VideoTransformer(VideoTransformerBase):
             return mask
         return img
 
-
 def draw_angle_meter(angle, label):
     fig, ax = plt.subplots(figsize=(3, 3))
     ax.axis('off')
@@ -112,11 +109,10 @@ def draw_angle_meter(angle, label):
     buf = BytesIO()
     plt.savefig(buf, format="png", bbox_inches='tight', transparent=True, dpi=120)
     buf.seek(0)
+    plt.close(fig)
     return buf
 
-
 def main():
-    # Custom CSS for styling
     st.set_page_config(
         layout="wide",
         page_title="NeuroTrack Pro | Stroke Therapy Monitoring",
@@ -183,8 +179,6 @@ def main():
     </style>
     """, unsafe_allow_html=True)
 
-
-    # Header Section
     st.markdown("""
     <div class="header">
         <h1 style="margin:0; color:#2c3e50;">🧠 NeuroTrack Pro</h1>
@@ -193,22 +187,14 @@ def main():
     """, unsafe_allow_html=True)
 
     # Session states
-    if "left_angles" not in st.session_state:
-        st.session_state.left_angles = []
-    if "right_angles" not in st.session_state:
-        st.session_state.right_angles = []
-    if "timestamps" not in st.session_state:
-        st.session_state.timestamps = []
-    if "start_time" not in st.session_state:
-        st.session_state.start_time = time.time()
-    if "last_df" not in st.session_state:
-        st.session_state.last_df = None
-    if "last_left_meter" not in st.session_state:
-        st.session_state.last_left_meter = None
-    if "last_right_meter" not in st.session_state:
-        st.session_state.last_right_meter = None
+    for key, default in [
+        ("left_angles", []), ("right_angles", []), ("timestamps", []),
+        ("start_time", time.time()), ("last_df", None),
+        ("last_left_meter", None), ("last_right_meter", None)
+    ]:
+        if key not in st.session_state:
+            st.session_state[key] = default
 
-    # Main columns layout
     col1, col2, col3 = st.columns([3, 1, 1])
 
     with col1:
@@ -216,10 +202,9 @@ def main():
         <div class="card">
             <h3 style="color:#2c3e50; margin-bottom:1rem;">Live Motion Analysis</h3>
         """, unsafe_allow_html=True)
-
         ctx = webrtc_streamer(
             key="stream",
-            video_transformer_factory=VideoTransformer,
+            video_processor_factory=VideoProcessor,
             rtc_configuration={"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]},
             media_stream_constraints={"video": True, "audio": False},
         )
@@ -241,7 +226,6 @@ def main():
         meter_right = st.empty()
         st.markdown("</div>", unsafe_allow_html=True)
 
-    # Bottom section
     st.markdown("""
     <div class="card">
         <h3 style="color:#2c3e50; margin-bottom:1rem;">Progress Over Time</h3>
@@ -249,7 +233,6 @@ def main():
     graph_placeholder = st.empty()
     st.markdown("</div>", unsafe_allow_html=True)
 
-    # Timer section
     st.markdown("""
     <div class="card">
         <div style="display: flex; justify-content: space-between; align-items: center;">
@@ -262,9 +245,9 @@ def main():
 
     # Main processing loop
     while ctx.state.playing:
-        if ctx.video_transformer:
-            left_angle = ctx.video_transformer.left_angle
-            right_angle = ctx.video_transformer.right_angle
+        if ctx.video_processor:
+            left_angle = ctx.video_processor.left_angle
+            right_angle = ctx.video_processor.right_angle
 
             st.session_state.left_angles.append(left_angle)
             st.session_state.right_angles.append(right_angle)
@@ -342,6 +325,5 @@ def main():
                 key="download-csv"
             )
 
-
-if __name__ == "__main__":
+if _name_ == "_main_":
     main()
